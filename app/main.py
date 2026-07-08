@@ -14,7 +14,8 @@ from pydantic import BaseModel
 from app.identity import get_user
 from app.data.documents import DOCUMENTS
 from app.permissions import filter_documents_by_role, action_needs_approval
-from app.retrieval import simple_search, looks_like_injection
+from app.retrieval import looks_like_injection
+from app.search import semantic_search
 from app.audit import log_event, AUDIT_EVENTS
 
 app = FastAPI(title="Корпоративный AI-ассистент (портфолио)")
@@ -61,8 +62,8 @@ def ask(req: AskRequest):
     # Employee тут физически не получит зарплатный документ.
     allowed_docs = filter_documents_by_role(DOCUMENTS, user["role"])
 
-    # Шаг 4: ищем среди разрешённых документов
-    found = simple_search(req.question, allowed_docs)
+    # Шаг 4: ищем среди разрешённых документов по СМЫСЛУ (эмбеддинги)
+    found = semantic_search(req.question, allowed_docs)
 
     # Защита: проверяем, нет ли в найденных документах "команд для бота"
     security_flag = any(looks_like_injection(d["text"]) for d in found)
