@@ -13,7 +13,7 @@ from pydantic import BaseModel
 
 from app.identity import get_user
 from app.data.documents import DOCUMENTS
-from app.permissions import filter_documents_by_role, action_needs_approval
+from app.permissions import filter_documents_by_role, action_needs_approval, role_can_do_action
 from app.retrieval import looks_like_injection
 from app.search import semantic_search
 from app.audit import log_event, AUDIT_EVENTS
@@ -103,6 +103,15 @@ def create_task(req: CreateTaskRequest):
     user = get_user(req.username)
     if not user:
         raise HTTPException(status_code=404, detail="Пользователь не найден")
+    
+    # Проверяем право на ДЕЙСТВИЕ (не на документ) до его выполнения
+    if not role_can_do_action(user["role"], "create_task"):
+        log_event("action_denied", user["user_id"],
+                  {"action": "create_task", "reason": "role_not_allowed"})
+        raise HTTPException(
+            status_code=403,
+            detail="У вашей роли нет прав на создание задач.",
+        )
 
     # Это рискованное действие — значит, нужно подтверждение
     needs_approval = action_needs_approval("create_task")
@@ -141,6 +150,25 @@ def approve(req: ApproveRequest):
     task = PENDING_TASKS.get(req.task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Черновик задачи не найден")
+    
+    # Проверка 1: есть ли у роли право подтверждать вообще
+    if not role_can_do_action(user["role"], "approve"):
+        log_event("action_denied", user["user_id"],
+                  {"action": "approve", "reason": "role_not_allowed"})
+        raise HTTPException(
+            status_code=403,
+            detail="У вашей роли нет прав на подтверждение задач.",
+        )
+
+    # Проверка 2: нельзя подтверждать СВОЙ собственный черновик
+    # (иначе "человек в цепочке" = тот же человек, что и запросил — контроля ноль)
+    if task["requested_by"] == user["user_id"]:
+        log_event("action_denied", user["user_id"],
+                  {"action": "approve", "reason": "self_approval_forbidden"})
+        raise HTTPException(
+            status_code=403,
+            detail="Нельзя подтверждать собственную задачу. Нужен другой человек.",
+        )
 
     if req.decision == "approve":
         task["status"] = "created"
