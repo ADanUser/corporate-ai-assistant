@@ -12,11 +12,9 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from app.identity import get_user
-from app.data.documents import DOCUMENTS
-from app.permissions import filter_documents_by_role, action_needs_approval, role_can_do_action
-from app.retrieval import looks_like_injection
-from app.search import semantic_search
+from app.permissions import action_needs_approval, role_can_do_action
 from app.audit import log_event, AUDIT_EVENTS
+from app.graph import graph
 
 app = FastAPI(title="Корпоративный AI-ассистент (портфолио)")
 
@@ -48,47 +46,27 @@ class ApproveRequest(BaseModel):
 @app.post("/ask")
 def ask(req: AskRequest):
     """
-    Пользователь задаёт вопрос. Бот ищет ответ ТОЛЬКО в тех документах,
-    которые разрешены его роли, и указывает источник.
+    Вопрос по документам. Вся логика (права, поиск, развилка) — внутри
+    LangGraph-графа. Эндпоинт лишь собирает рюкзак и вызывает граф.
     """
-    # Шаг 1: кто это?
+    # Guard остаётся здесь: "нет пользователя" в граф пока не тащим
     user = get_user(req.username)
     if not user:
         raise HTTPException(status_code=404, detail="Пользователь не найден")
 
     log_event("question_received", user["user_id"], {"question": req.question})
 
-    # Шаг 3: фильтруем документы по роли ДО поиска.
-    # Employee тут физически не получит зарплатный документ.
-    allowed_docs = filter_documents_by_role(DOCUMENTS, user["role"])
+    # Собираем начальный рюкзак и запускаем граф
+    result = graph.invoke({
+        "username": req.username,
+        "question": req.question,
+    })
 
-    # Шаг 4: ищем среди разрешённых документов по СМЫСЛУ (эмбеддинги)
-    found = semantic_search(req.question, allowed_docs)
-
-    # Защита: проверяем, нет ли в найденных документах "команд для бота"
-    security_flag = any(looks_like_injection(d["text"]) for d in found)
-    if security_flag:
-        log_event("security_flag", user["user_id"],
-                  {"reason": "possible_prompt_injection"})
-
-    # Если ничего не нашли — честно говорим "не найдено", а не выдумываем
-    if not found:
-        log_event("no_source_answer", user["user_id"], {})
-        return {
-            "answer": "В доступных мне документах нет ответа на этот вопрос.",
-            "sources": [],
-            "security_flag": security_flag,
-        }
-
-    # Формируем ответ. В реальном проекте здесь текст пишет нейросеть
-    # на основе найденных кусков. Для демо мы отдаём текст документа
-    # и — главное — источник.
-    best = found[0]
-    log_event("answer_given", user["user_id"], {"source": best["source"]})
+    # Достаём из финального рюкзака то, что отдаём наружу
     return {
-        "answer": best["text"],
-        "sources": [best["source"]],
-        "security_flag": security_flag,
+        "answer": result["answer"],
+        "sources": result["sources"],
+        "security_flag": result.get("security_flag", False),
     }
 
 
