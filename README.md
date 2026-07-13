@@ -78,6 +78,31 @@ uvicorn app.main:app --reload
        → Запись в журнал (audit)
 ```
 
+## LangGraph-граф
+
+Конвейер запроса собран как управляемый граф. Прямые переходы — сплошные
+стрелки, развилка «найдено / не найдено» — пунктирные.
+
+```mermaid
+graph TD;
+    __start__([__start__]):::first
+    identity_step(identity_step)
+    permission_step(permission_step)
+    search_step(search_step)
+    answer_step(answer_step)
+    no_answer_step(no_answer_step)
+    __end__([__end__]):::last
+    __start__ --> identity_step;
+    identity_step --> permission_step;
+    permission_step --> search_step;
+    search_step -.-> answer_step;
+    search_step -.-> no_answer_step;
+    answer_step --> __end__;
+    no_answer_step --> __end__;
+    classDef first fill-opacity:0
+    classDef last fill:#bfb6fc
+```
+
 ## Структура кода
 
 ```
@@ -91,7 +116,7 @@ app/
   main.py           — FastAPI, связывает всё в конвейер
 ```
 
-## Ограничения (честно) и что дальше
+## Ограничения и что дальше
 
 Это MVP для портфолио. В нём намеренно упрощено:
 
@@ -102,9 +127,4 @@ app/
 - **Документы** хранятся в коде; в реальной версии — во внешнем хранилище
   с версионированием.
 
-## Как бы я довёл это до production
 
-Подключил бы реальный SSO вместо заглушки, вынес документы во внешнее
-хранилище с версионированием, добавил набор автотестов (evals) с
-блокирующей метрикой: не выкатываю, если хоть один тест на права доступа
-падает. Плюс мониторинг ошибок и задержек.

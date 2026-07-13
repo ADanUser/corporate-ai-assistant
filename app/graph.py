@@ -25,7 +25,14 @@ builder.add_edge("identity_step", "permission_step")
 builder.add_edge("permission_step", "search_step")
 
 # РАЗВИЛКА:
-builder.add_conditional_edges("search_step", route_after_search)
+builder.add_conditional_edges(
+    "search_step",
+    route_after_search,
+    {
+        "answer_step": "answer_step",
+        "no_answer_step": "no_answer_step",
+    },
+)
 
 # Обе ветки развилки ведут в конец графа
 builder.add_edge("answer_step", END)
@@ -53,3 +60,7 @@ if __name__ == "__main__":
     print("СЦЕНАРИЙ 2 (ответа нет):")
     print("  ОТВЕТ:", r2["answer"])
     print("  ИСТОЧНИКИ:", r2["sources"])
+
+    # ── Нарисовать граф в виде схемы (Mermaid) ──
+    print("\n--- СХЕМА ГРАФА (Mermaid) ---")
+    print(graph.get_graph().draw_mermaid())
