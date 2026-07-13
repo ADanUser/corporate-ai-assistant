@@ -57,3 +57,25 @@ def answer_node(state: AssistantState):
         "answer": best["text"],
         "sources": [best["source"]],
     }
+
+
+def route_after_search(state: AssistantState) -> str:
+    """
+    Функция-развилка: смотрит в рюкзак и решает, КУДА идти после поиска.
+    Возвращает ИМЯ следующего узла (строку), а не данные.
+    """
+    if not state["found"]:          # ничего не нашли
+        return "no_answer_step"     # → узел-отказ
+    return "answer_step"            # → узел-ответ
+
+
+def no_answer_node(state: AssistantState):
+    """
+    Узел-отказ: ничего не нашли — честно об этом говорим.
+    Раньше это была ветка 'if not found' внутри /ask.
+    """
+    log_event("no_source_answer", state["user"]["user_id"], {})
+    return {
+        "answer": "В доступных мне документах нет ответа на этот вопрос.",
+        "sources": [],
+    }
