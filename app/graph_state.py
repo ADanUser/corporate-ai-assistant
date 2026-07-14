@@ -1,4 +1,3 @@
-# app/graph_state.py
 from typing import TypedDict
 
 

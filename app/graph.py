@@ -1,5 +1,5 @@
 from langgraph.graph import StateGraph, START, END
-
+from langgraph.checkpoint.memory import InMemorySaver
 from app.graph_state import AssistantState
 from app.nodes import (
     identity_node,
@@ -54,24 +54,36 @@ builder.add_edge("no_answer_step", END)
 # Ветка действий (пока заглушка) → конец
 builder.add_edge("action_step", END)
 
-graph = builder.compile()
+checkpointer = InMemorySaver()
+graph = builder.compile(checkpointer=checkpointer)
 
 
-# ── Временный пробный запуск ──
 if __name__ == "__main__":
-    rq = graph.invoke({
-        "username": "alice",
-        "question": "как оформить командировку?",
-    })
-    print("ВОПРОС →", rq["intent"], "|", rq["answer"][:50])
+    from langgraph.types import Command
 
-    # Запрос-ДЕЙСТВИЕ → должен пойти в ветку действий (заглушка)
-    ra = graph.invoke({
-        "username": "bob",
-        "question": "создай задачу добавить логирование",
-    })
-    print("ДЕЙСТВИЕ →", ra["intent"], "|", ra["answer"])
+    # thread_id — "имя сохранёнки". Один и тот же id = продолжаем тот же граф.
+    config = {"configurable": {"thread_id": "demo-1"}}
 
-    # ── Нарисовать граф в виде схемы (Mermaid) ──
-    print("\n--- СХЕМА ГРАФА (Mermaid) ---")
-    print(graph.get_graph().draw_mermaid())
+    # ── ШАГ 1: запускаем действие. Граф дойдёт до interrupt и ЗАМРЁТ ──
+    result = graph.invoke(
+        {"username": "bob", "question": "создай задачу добавить логирование"},
+        config=config,
+    )
+    print("ПОСЛЕ ПЕРВОГО ВЫЗОВА (граф на паузе):")
+
+    # Информацию о паузе достаём из состояния графа
+    snapshot = graph.get_state(config)
+    print("  Граф ждёт на узлах:", snapshot.next)
+
+    # Карточка approval лежит внутри задачи: tasks[0].interrupts[0].value
+    card = snapshot.tasks[0].interrupts[0].value
+    print("  Сообщение:", card["message"])
+    print("  Задача:", card["task_title"])
+
+    # ── ШАГ 2: человек подтверждает. Возобновляем ТОТ ЖЕ thread_id ──
+    final = graph.invoke(
+        Command(resume="approve"),   # передаём решение человека
+        config=config,               # тот же config = то же "имя сохранёнки"
+    )
+    print("\nПОСЛЕ ВОЗОБНОВЛЕНИЯ (approve):")
+    print("  ОТВЕТ:", final["answer"])
