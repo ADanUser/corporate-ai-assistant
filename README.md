@@ -85,22 +85,28 @@ uvicorn app.main:app --reload
 
 ```mermaid
 graph TD;
-    __start__([__start__]):::first
-    identity_step(identity_step)
-    permission_step(permission_step)
-    search_step(search_step)
-    answer_step(answer_step)
-    no_answer_step(no_answer_step)
-    __end__([__end__]):::last
-    __start__ --> identity_step;
-    identity_step --> permission_step;
-    permission_step --> search_step;
-    search_step -.-> answer_step;
-    search_step -.-> no_answer_step;
-    answer_step --> __end__;
-    no_answer_step --> __end__;
-    classDef first fill-opacity:0
-    classDef last fill:#bfb6fc
+        __start__([<p>__start__</p>]):::first
+        identity_step(identity_step)
+        intent_step(intent_step)
+        permission_step(permission_step)
+        search_step(search_step)
+        answer_step(answer_step)
+        no_answer_step(no_answer_step)
+        action_step(action_step)
+        __end__([<p>__end__</p>]):::last
+        __start__ --> identity_step;
+        action_step --> __end__;
+        answer_step --> __end__;
+        identity_step --> intent_step;
+        no_answer_step --> __end__;
+        permission_step --> search_step;
+        intent_step -.-> permission_step;
+        intent_step -.-> action_step;
+        search_step -.-> answer_step;
+        search_step -.-> no_answer_step;
+        classDef default fill:#f2f0ff,line-height:1.2
+        classDef first fill-opacity:0
+        classDef last fill:#bfb6fc
 ```
 
 ## Структура кода
@@ -116,15 +122,31 @@ app/
   main.py           — FastAPI, связывает всё в конвейер
 ```
 
+## Human-in-the-loop (подтверждение действий)
+
+Рискованные действия (создание задачи) не выполняются автоматически.
+Граф ставит паузу через LangGraph `interrupt`, сохраняет состояние
+(`checkpointer`) и ждёт решения человека. Подтверждать может только
+другой пользователь с правом `approve` — не тот, кто создал задачу
+(separation of duties). Всё логируется в audit log.
+
+Поток: `POST /ask` (действие) → граф возвращает карточку + `thread_id` →
+`POST /approve` с этим `thread_id` возобновляет граф → задача создаётся
+только после `approve`.
+
+
 ## Ограничения и что дальше
 
-Это MVP для портфолио. В нём намеренно упрощено:
 
 - **Ответы** отдают текст найденного документа напрямую. Следующий шаг —
   генерировать ответ языковой моделью на основе найденных фрагментов.
+- **Определение намерения (intent)** сделано по ключевым словам. В проде
+  это делала бы языковая модель.
+- **Состояние графа** хранится в памяти (`InMemorySaver`). При перезапуске
+  сервера незавершённые паузы теряются; в проде — `PostgresSaver`.
+- **thread_id** пользователь передаёт вручную между `/ask` и `/approve`.
+  В реальном UI его хранил бы фронтенд.
 - **Вход (SSO)** — заглушка с тремя пользователями.
 - **Jira-инструмент** — мок (возвращает фейковую ссылку).
 - **Документы** хранятся в коде; в реальной версии — во внешнем хранилище
   с версионированием.
-
-
