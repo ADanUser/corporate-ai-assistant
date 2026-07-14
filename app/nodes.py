@@ -1,7 +1,7 @@
 from langgraph.types import interrupt
 from app.identity import get_user
 from app.data.documents import DOCUMENTS
-from app.permissions import filter_documents_by_role
+from app.permissions import filter_documents_by_role, role_can_do_action
 from app.retrieval import looks_like_injection
 from app.search import semantic_search
 from app.audit import log_event
@@ -109,23 +109,30 @@ def route_after_intent(state: AssistantState) -> str:
 
 def action_node(state: AssistantState):
     """
-    Узел действия: готовит черновик задачи и ставит паузу на подтверждение.
+    Узел действия: проверяет право на создание, затем ставит паузу на подтверждение.
     interrupt() замораживает граф и ждёт решения человека.
     """
-    
+    role = state["user"]["role"]
+
+    # ── Проверка прав ДО паузы (это чтение, безопасно повторяется при возобновлении) ──
+    if not role_can_do_action(role, "create_task"):
+        log_event("action_denied", state["user"]["user_id"],
+                  {"action": "create_task", "reason": "role_not_allowed"})
+        return {
+            "answer": "У вашей роли нет прав на создание задач.",
+            "sources": [],
+        }
+
     task_title = state["question"]
 
     # ⏸ ПАУЗА: показываем человеку, что собираемся сделать, и ждём решения.
-    # На паузе граф замирает здесь. На возобновлении сюда придёт ответ человека.
     decision = interrupt({
         "type": "approval_request",
         "message": "Подтвердите создание задачи",
         "task_title": task_title,
     })
 
-    # --- Код НИЖЕ выполнится только ПОСЛЕ решения человека ---
-    # (до interrupt код при возобновлении прогонится заново,
-    #  поэтому всё важное — тут, после паузы)
+    # --- Код НИЖЕ выполнится только ПОСЛЕ решения человека (важное — тут) ---
     if decision == "approve":
         log_event("task_approved", state["user"]["user_id"], {"title": task_title})
         return {

@@ -11,6 +11,8 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+import uuid                              # для генерации уникального thread_id
+from langgraph.types import Command      # для возобновления графа
 from app.identity import get_user
 from app.permissions import action_needs_approval, role_can_do_action
 from app.audit import log_event, AUDIT_EVENTS
@@ -37,7 +39,7 @@ class CreateTaskRequest(BaseModel):
 
 class ApproveRequest(BaseModel):
     username: str
-    task_id: str
+    thread_id: str
     decision: str          # "approve" или "reject"
 
 
@@ -46,24 +48,37 @@ class ApproveRequest(BaseModel):
 @app.post("/ask")
 def ask(req: AskRequest):
     """
-    Вопрос по документам. Вся логика (права, поиск, развилка) — внутри
-    LangGraph-графа. Эндпоинт лишь собирает рюкзак и вызывает граф.
+    Вопрос ИЛИ действие. Вся логика — в графе.
+    Если граф встал на паузу (действие) — возвращаем карточку approval + thread_id.
     """
-    # Guard остаётся здесь: "нет пользователя" в граф пока не тащим
     user = get_user(req.username)
     if not user:
         raise HTTPException(status_code=404, detail="Пользователь не найден")
 
     log_event("question_received", user["user_id"], {"question": req.question})
 
-    # Собираем начальный рюкзак и запускаем граф
-    result = graph.invoke({
-        "username": req.username,
-        "question": req.question,
-    })
+    # Каждый прогон — свой уникальный thread_id (чтобы не мешать другим запросам)
+    thread_id = f"task-{uuid.uuid4().hex[:8]}"
+    config = {"configurable": {"thread_id": thread_id}}
 
-    # Достаём из финального рюкзака то, что отдаём наружу
+    result = graph.invoke(
+        {"username": req.username, "question": req.question},
+        config=config,
+    )
+
+    # Признак: если answer нет — граф встал на паузу (это было действие)
+    if "answer" not in result:
+        snapshot = graph.get_state(config)
+        card = snapshot.tasks[0].interrupts[0].value
+        return {
+            "status": "pending_approval",
+            "thread_id": thread_id,          # ← пользователь вернёт его в /approve
+            "approval_card": card,
+        }
+
+    # Иначе граф дошёл до конца — обычный ответ
     return {
+        "status": "done",
         "answer": result["answer"],
         "sources": result["sources"],
         "security_flag": result.get("security_flag", False),
@@ -72,46 +87,48 @@ def ask(req: AskRequest):
 
 # ================== ЭНДПОИНТ 2: СОЗДАТЬ ЗАДАЧУ (черновик) ==================
 
-@app.post("/create-task")
-def create_task(req: CreateTaskRequest):
+@app.post("/approve")
+def approve(req: ApproveRequest):
     """
-    Пользователь просит создать задачу. Бот НЕ создаёт её сразу.
-    Он готовит черновик и ждёт подтверждения (human-in-the-loop).
+    Возобновляет замороженный граф по thread_id и передаёт решение человека.
+    С проверками безопасности: право на approve + запрет самоподтверждения.
     """
     user = get_user(req.username)
     if not user:
         raise HTTPException(status_code=404, detail="Пользователь не найден")
-    
-    # Проверяем право на ДЕЙСТВИЕ (не на документ) до его выполнения
-    if not role_can_do_action(user["role"], "create_task"):
+
+    config = {"configurable": {"thread_id": req.thread_id}}
+
+    # Достаём замороженное состояние графа
+    snapshot = graph.get_state(config)
+
+    # Если задачи нет или она уже не на паузе — нечего подтверждать
+    if not snapshot.next:
+        raise HTTPException(status_code=404,
+                            detail="Нет задачи, ожидающей подтверждения")
+
+    # ── Проверка 1: есть ли у роли право подтверждать ──
+    if not role_can_do_action(user["role"], "approve"):
         log_event("action_denied", user["user_id"],
-                  {"action": "create_task", "reason": "role_not_allowed"})
-        raise HTTPException(
-            status_code=403,
-            detail="У вашей роли нет прав на создание задач.",
-        )
+                  {"action": "approve", "reason": "role_not_allowed"})
+        raise HTTPException(status_code=403,
+                            detail="У вашей роли нет прав на подтверждение задач.")
 
-    # Это рискованное действие — значит, нужно подтверждение
-    needs_approval = action_needs_approval("create_task")
+    # ── Проверка 2: запрет самоподтверждения (separation of duties) ──
+    creator = snapshot.values["username"]           # кто создал (из графа)
+    if req.username == creator:                     # подтверждает тот же?
+        log_event("action_denied", user["user_id"],
+                  {"action": "approve", "reason": "self_approval_forbidden"})
+        raise HTTPException(status_code=403,
+                            detail="Нельзя подтверждать собственную задачу. Нужен другой человек.")
 
-    task_id = f"task_{len(PENDING_TASKS) + 1}"
-    PENDING_TASKS[task_id] = {
-        "task_id": task_id,
-        "title": req.title,
-        "requested_by": user["user_id"],
-        "status": "pending_approval",
-    }
-
-    log_event("task_draft_created", user["user_id"],
-              {"task_id": task_id, "title": req.title})
+    # Проверки пройдены — возобновляем граф
+    final = graph.invoke(Command(resume=req.decision), config=config)
 
     return {
-        "message": "Черновик задачи готов. Требуется подтверждение.",
-        "task_id": task_id,
-        "preview": PENDING_TASKS[task_id],
-        "needs_approval": needs_approval,
+        "status": "done",
+        "answer": final["answer"],
     }
-
 
 # ================== ЭНДПОИНТ 3: ПОДТВЕРДИТЬ ИЛИ ОТКЛОНИТЬ ==================
 
