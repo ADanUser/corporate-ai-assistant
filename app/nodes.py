@@ -8,6 +8,10 @@ from app.audit import log_event
 from app.graph_state import AssistantState
 
 
+# Слова-подсказки, что пользователь просит ДЕЙСТВИЕ, а не задаёт вопрос
+ACTION_KEYWORDS = ["создай", "создать", "сделай", "добавь", "заведи", "поставь задачу"]
+
+
 def identity_node(state: AssistantState):
     """
     Узел identity: по username достаёт профиль пользователя.
@@ -15,6 +19,18 @@ def identity_node(state: AssistantState):
     """
     user = get_user(state["username"])   # достаём username из рюкзака
     return {"user": user}                # кладём user обратно в рюкзак
+
+def intent_node(state: AssistantState):
+    """
+    Узел intent: определяет, вопрос это или действие.
+    MVP-версия: по ключевым словам. В проде это делала бы LLM.
+    """
+    text = state["question"].lower()
+    if any(word in text for word in ACTION_KEYWORDS):
+        intent = "action"
+    else:
+        intent = "question"
+    return {"intent": intent}
 
 
 def permission_node(state: AssistantState):
@@ -77,5 +93,25 @@ def no_answer_node(state: AssistantState):
     log_event("no_source_answer", state["user"]["user_id"], {})
     return {
         "answer": "В доступных мне документах нет ответа на этот вопрос.",
+        "sources": [],
+    }
+
+
+def route_after_intent(state: AssistantState) -> str:
+    """
+    Развилка по intent: вопрос идёт в ветку поиска, действие — в ветку действий.
+    Читает поле intent, которое положил intent_node.
+    """
+    if state["intent"] == "action":
+        return "action_step"        # → ветка действий (пока заглушка)
+    return "permission_step"        # → ветка вопросов
+
+
+def action_node(state: AssistantState):
+    """
+    ВРЕМЕННАЯ ЗАГЛУШКА ветки действий.
+    """
+    return {
+        "answer": f"Распознано действие: «{state['question']}». (Здесь будет создание задачи с подтверждением.)",
         "sources": [],
     }

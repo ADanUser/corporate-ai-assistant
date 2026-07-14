@@ -17,6 +17,8 @@ class AssistantState(TypedDict):
     found: list            # найденные по смыслу документы (из search)
     security_flag: bool    # похоже ли на prompt injection (из search)
 
+    intent: str            # "question" или "action" (кладёт intent_node)
+
     # ── Финальный результат ──
     answer: str            # текст ответа
     sources: list          # источники ответа
