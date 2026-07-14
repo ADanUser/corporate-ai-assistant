@@ -14,15 +14,11 @@ from pydantic import BaseModel
 import uuid                              # для генерации уникального thread_id
 from langgraph.types import Command      # для возобновления графа
 from app.identity import get_user
-from app.permissions import action_needs_approval, role_can_do_action
+from app.permissions import role_can_do_action
 from app.audit import log_event, AUDIT_EVENTS
 from app.graph import graph
 
 app = FastAPI(title="Корпоративный AI-ассистент (портфолио)")
-
-# Здесь мы храним черновики задач, которые ждут подтверждения.
-# Ключ — id черновика, значение — данные задачи.
-PENDING_TASKS = {}
 
 
 # ---- Описание того, что приходит в запросах (валидация за нас) ----
@@ -32,18 +28,13 @@ class AskRequest(BaseModel):
     question: str          # сам вопрос
 
 
-class CreateTaskRequest(BaseModel):
-    username: str
-    title: str             # название задачи
-
-
 class ApproveRequest(BaseModel):
     username: str
-    thread_id: str
+    thread_id: str         # номерок, полученный из /ask
     decision: str          # "approve" или "reject"
 
 
-# ================== ЭНДПОИНТ 1: ВОПРОС ПО ДОКУМЕНТАМ ==================
+# ================== ЭНДПОИНТ 1: ВОПРОС ИЛИ ДЕЙСТВИЕ ==================
 
 @app.post("/ask")
 def ask(req: AskRequest):
@@ -85,7 +76,7 @@ def ask(req: AskRequest):
     }
 
 
-# ================== ЭНДПОИНТ 2: СОЗДАТЬ ЗАДАЧУ (черновик) ==================
+# ================== ЭНДПОИНТ 2: ПОДТВЕРДИТЬ ИЛИ ОТКЛОНИТЬ ==================
 
 @app.post("/approve")
 def approve(req: ApproveRequest):
@@ -130,62 +121,8 @@ def approve(req: ApproveRequest):
         "answer": final["answer"],
     }
 
-# ================== ЭНДПОИНТ 3: ПОДТВЕРДИТЬ ИЛИ ОТКЛОНИТЬ ==================
 
-@app.post("/approve")
-def approve(req: ApproveRequest):
-    """
-    Человек подтверждает или отклоняет черновик. Только после "approve"
-    задача считается созданной. Это и есть безопасная остановка.
-    """
-    user = get_user(req.username)
-    if not user:
-        raise HTTPException(status_code=404, detail="Пользователь не найден")
-
-    task = PENDING_TASKS.get(req.task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Черновик задачи не найден")
-    
-    # Проверка 1: есть ли у роли право подтверждать вообще
-    if not role_can_do_action(user["role"], "approve"):
-        log_event("action_denied", user["user_id"],
-                  {"action": "approve", "reason": "role_not_allowed"})
-        raise HTTPException(
-            status_code=403,
-            detail="У вашей роли нет прав на подтверждение задач.",
-        )
-
-    # Проверка 2: нельзя подтверждать СВОЙ собственный черновик
-    # (иначе "человек в цепочке" = тот же человек, что и запросил — контроля ноль)
-    if task["requested_by"] == user["user_id"]:
-        log_event("action_denied", user["user_id"],
-                  {"action": "approve", "reason": "self_approval_forbidden"})
-        raise HTTPException(
-            status_code=403,
-            detail="Нельзя подтверждать собственную задачу. Нужен другой человек.",
-        )
-
-    if req.decision == "approve":
-        task["status"] = "created"
-        # Здесь в реальном проекте вызвался бы мок Jira-инструмента
-        fake_url = f"https://jira.example.com/browse/AI-{req.task_id}"
-        log_event("task_approved", user["user_id"],
-                  {"task_id": req.task_id, "url": fake_url})
-        return {
-            "message": "Готово. Задача создана после вашего подтверждения.",
-            "url": fake_url,
-            "task": task,
-        }
-    else:
-        task["status"] = "rejected"
-        log_event("task_rejected", user["user_id"], {"task_id": req.task_id})
-        return {
-            "message": "Действие не выполнено: задача отклонена.",
-            "task": task,
-        }
-
-
-# ================== ЭНДПОИНТ 4: ПОСМОТРЕТЬ ЖУРНАЛ ==================
+# ================== ЭНДПОИНТ 3: ПОСМОТРЕТЬ ЖУРНАЛ ==================
 
 @app.get("/audit")
 def get_audit():
