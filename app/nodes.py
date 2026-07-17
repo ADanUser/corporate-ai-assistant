@@ -3,14 +3,24 @@ from app.identity import get_user
 from app.data.documents import DOCUMENTS
 from app.permissions import filter_documents_by_role, role_can_do_action
 from app.retrieval import looks_like_injection
-from app.search import semantic_search
+from google.genai import types
+from app.search import semantic_search, _client_gemini
 from app.audit import log_event
 from app.graph_state import AssistantState
 
 
-# Слова-подсказки, что пользователь просит ДЕЙСТВИЕ, а не задаёт вопрос
-ACTION_KEYWORDS = ["создай", "создать", "сделай", "добавь", "заведи", "поставь задачу"]
+_INTENT_MODEL = "gemini-3.1-flash-lite"
 
+INTENT_PROMPT = """Ты — классификатор запросов корпоративного ассистента.
+Определи, что хочет пользователь:
+- "question" — спрашивает информацию, просит объяснить, задаёт вопрос
+  (даже если в вопросе есть слова «создать», «сделать» — это всё равно вопрос).
+- "action" — просит ВЫПОЛНИТЬ действие: создать задачу, завести заявку.
+
+Ответь РОВНО одним словом: question или action.
+Без пояснений, без кавычек, без точки.
+
+Запрос пользователя: {question}"""
 
 def identity_node(state: AssistantState):
     """
@@ -22,15 +32,40 @@ def identity_node(state: AssistantState):
 
 def intent_node(state: AssistantState):
     """
-    Узел intent: определяет, вопрос это или действие.
-    MVP-версия: по ключевым словам. В проде это делала бы LLM.
+    Узел intent: определяет, вопрос это или действие, с помощью LLM.
+    Модель — лёгкая Gemini Flash-Lite (быстрая и дешёвая, для классификации).
+    Возвращает СТРОГО "question" или "action".
     """
-    text = state["question"].lower()
-    if any(word in text for word in ACTION_KEYWORDS):
-        intent = "action"
-    else:
-        intent = "question"
-    return {"intent": intent}
+    question = state["question"]
+    prompt = INTENT_PROMPT.format(question=question)
+
+    try:
+        # Вызываем генеративную Gemini (не эмбеддинги!) как классификатор
+        response = _client_gemini.models.generate_content(
+            model=_INTENT_MODEL,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                # Отключаем "размышления": классификатору они не нужны,
+                # так быстрее и дешевле, плюс уходит warning про thought parts
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
+            ),
+        )
+        # Защитная нормализация: убираем пробелы/переносы и приводим к нижнему регистру
+        raw = (response.text or "").strip().lower()
+    except Exception as e:
+        # Сеть/API упали — не роняем весь граф, тихо откатываемся к вопросу
+        log_event("intent_llm_error", state["user"]["user_id"],
+                  {"error": str(e)})
+        return {"intent": "question"}
+
+    # Fallback: если модель вернула что-то за пределами двух допустимых значений —
+    # не гадаем, откатываемся к безопасному "question" и логируем это
+    if raw not in ("question", "action"):
+        log_event("intent_unexpected_output", state["user"]["user_id"],
+                  {"raw_output": raw})
+        return {"intent": "question"}
+
+    return {"intent": raw}
 
 
 def permission_node(state: AssistantState):
