@@ -55,7 +55,7 @@ def intent_node(state: AssistantState):
     except Exception as e:
         # Сеть/API упали — не роняем весь граф, тихо откатываемся к вопросу
         log_event("intent_llm_error", state["user"]["user_id"],
-                  {"error": str(e)})
+                  {"error_type": type(e).__name__})
         return {"intent": "question"}
 
     # Fallback: если модель вернула что-то за пределами двух допустимых значений —
@@ -169,13 +169,13 @@ def action_node(state: AssistantState):
 
     # --- Код НИЖЕ выполнится только ПОСЛЕ решения человека (важное — тут) ---
     if decision == "approve":
-        log_event("task_approved", state["user"]["user_id"], {"title": task_title})
+        log_event("task_approved", state["user"]["user_id"], {"title": task_title[:100]})
         return {
             "answer": f"Готово. Задача создана после подтверждения: «{task_title}».",
             "sources": [],
         }
     else:
-        log_event("task_rejected", state["user"]["user_id"], {"title": task_title})
+        log_event("task_rejected", state["user"]["user_id"], {"title": task_title[:100]})
         return {
             "answer": f"Действие отклонено. Задача «{task_title}» не создана.",
             "sources": [],

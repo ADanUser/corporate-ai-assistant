@@ -46,7 +46,7 @@ def ask(req: AskRequest):
     if not user:
         raise HTTPException(status_code=404, detail="Пользователь не найден")
 
-    log_event("question_received", user["user_id"], {"question": req.question})
+    log_event("question_received", user["user_id"], {"question_len": len(req.question)})
 
     # Каждый прогон — свой уникальный thread_id (чтобы не мешать другим запросам)
     thread_id = f"task-{uuid.uuid4().hex[:8]}"
