@@ -11,9 +11,10 @@ from app.nodes import (
     intent_node,  
     action_node,          
     route_after_intent,
-    security_node,           # ← НОВОЕ
-    route_after_security,    # ← НОВОЕ
-    blocked_node,            # ← НОВОЕ
+    security_node,           
+    route_after_security,    
+    blocked_node,            
+    output_guard,            # выходной guard
 )
 
 builder = StateGraph(AssistantState)
@@ -22,6 +23,7 @@ builder = StateGraph(AssistantState)
 builder.add_node("identity_step", identity_node)
 builder.add_node("security_step", security_node)
 builder.add_node("blocked_step", blocked_node)
+builder.add_node("output_guard", output_guard)
 builder.add_node("intent_step", intent_node)
 builder.add_node("permission_step", permission_node)
 builder.add_node("search_step", search_node)
@@ -44,8 +46,7 @@ builder.add_conditional_edges(
     },
 )
 
-# Заблокированный запрос — тупик, сразу в конец
-builder.add_edge("blocked_step", END)
+builder.add_edge("blocked_step", "output_guard")
 
 # Развилка по intent: вопрос → permission, действие → action
 builder.add_conditional_edges(
@@ -67,8 +68,9 @@ builder.add_conditional_edges(
         "no_answer_step": "no_answer_step",
     },
 )
-builder.add_edge("answer_step", END)
-builder.add_edge("no_answer_step", END)
+builder.add_edge("answer_step", "output_guard")
+builder.add_edge("no_answer_step", "output_guard")
+builder.add_edge("output_guard", END)
 
 # Ветка действий (пока заглушка) → конец
 builder.add_edge("action_step", END)
