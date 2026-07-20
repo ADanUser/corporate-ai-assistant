@@ -15,7 +15,7 @@ class AssistantState(TypedDict):
     allowed_docs: list     # документы, разрешённые роли (из permission)
     found: list            # найденные по смыслу документы (из search)
     security_flag: bool    # похоже ли на prompt injection (из search)
-
+    injection_in_query: bool   # инъекция в ЗАПРОСЕ пользователя (из security)
     intent: str            # "question" или "action" (кладёт intent_node)
 
     # ── Финальный результат ──

@@ -11,12 +11,17 @@ from app.nodes import (
     intent_node,  
     action_node,          
     route_after_intent,
+    security_node,           # ← НОВОЕ
+    route_after_security,    # ← НОВОЕ
+    blocked_node,            # ← НОВОЕ
 )
 
 builder = StateGraph(AssistantState)
 
 # Узлы
 builder.add_node("identity_step", identity_node)
+builder.add_node("security_step", security_node)
+builder.add_node("blocked_step", blocked_node)
 builder.add_node("intent_step", intent_node)
 builder.add_node("permission_step", permission_node)
 builder.add_node("search_step", search_node)
@@ -26,7 +31,21 @@ builder.add_node("action_step", action_node)
 
 # Рёбра
 builder.add_edge(START, "identity_step")
-builder.add_edge("identity_step", "intent_step")
+# После identity — сначала проверка безопасности запроса
+builder.add_edge("identity_step", "security_step")
+
+# Развилка: инъекция → blocked, чисто → intent
+builder.add_conditional_edges(
+    "security_step",
+    route_after_security,
+    {
+        "blocked_step": "blocked_step",
+        "intent_step": "intent_step",
+    },
+)
+
+# Заблокированный запрос — тупик, сразу в конец
+builder.add_edge("blocked_step", END)
 
 # Развилка по intent: вопрос → permission, действие → action
 builder.add_conditional_edges(

@@ -22,6 +22,41 @@ INTENT_PROMPT = """Ты — классификатор запросов корп
 
 Запрос пользователя: {question}"""
 
+def security_node(state: AssistantState):
+    """
+    Узел security: проверяет ЗАПРОС пользователя на признаки prompt injection.
+    Это первый рубеж defense-in-depth — ловим атаку на входе, до всего остального.
+    Само решение "блокировать или пропустить" принимает развилка route_after_security.
+    """
+    question = state["question"]
+    is_injection = looks_like_injection(question)
+
+    if is_injection:
+        # Попытка инъекции — это security-событие, безопасник должен его видеть
+        log_event("injection_in_query", state["user"]["user_id"],
+                  {"question_len": len(question)})
+
+    return {"injection_in_query": is_injection}
+
+def route_after_security(state: AssistantState) -> str:
+    """
+    Развилка после проверки безопасности.
+    Инъекция в запросе → блокируем (узел-отказ). Чисто → идём дальше, к intent.
+    """
+    if state["injection_in_query"]:
+        return "blocked_step"      # → узел-отказ
+    return "intent_step"           # → обычный путь
+
+def blocked_node(state: AssistantState):
+    """
+    Узел-отказ: запрос заблокирован из-за признаков инъекции.
+    Тупиковая ветка — дальше граф не идёт, сразу к концу.
+    """
+    return {
+        "answer": "Запрос отклонён: он содержит признаки небезопасной инструкции.",
+        "sources": [],
+    }
+
 def identity_node(state: AssistantState):
     """
     Узел identity: по username достаёт профиль пользователя.
