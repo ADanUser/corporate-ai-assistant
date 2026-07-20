@@ -38,22 +38,24 @@ class ApproveRequest(BaseModel):
 
 @app.post("/ask")
 def ask(req: AskRequest):
-    """
-    Вопрос ИЛИ действие. Вся логика — в графе.
-    Если граф встал на паузу (действие) — возвращаем карточку approval + thread_id.
-    """
     user = get_user(req.username)
     if not user:
         raise HTTPException(status_code=404, detail="Пользователь не найден")
 
-    log_event("question_received", user["user_id"], {"question_len": len(req.question)})
-
-    # Каждый прогон — свой уникальный thread_id (чтобы не мешать другим запросам)
+    # Сначала создаём thread_id — он нужен уже первому событию
     thread_id = f"task-{uuid.uuid4().hex[:8]}"
     config = {"configurable": {"thread_id": thread_id}}
 
+    # Теперь логируем — thread_id уже существует
+    log_event("question_received", user["user_id"],
+              {"question_len": len(req.question)}, thread_id)
+
     result = graph.invoke(
-        {"username": req.username, "question": req.question},
+        {
+            "username": req.username,
+            "question": req.question,
+            "thread_id": thread_id,
+        },
         config=config,
     )
 
@@ -101,7 +103,7 @@ def approve(req: ApproveRequest):
     # ── Проверка 1: есть ли у роли право подтверждать ──
     if not role_can_do_action(user["role"], "approve"):
         log_event("action_denied", user["user_id"],
-                  {"action": "approve", "reason": "role_not_allowed"})
+                  {"action": "approve", "reason": "role_not_allowed"}, req.thread_id)
         raise HTTPException(status_code=403,
                             detail="У вашей роли нет прав на подтверждение задач.")
 
@@ -109,7 +111,7 @@ def approve(req: ApproveRequest):
     creator = snapshot.values["username"]           # кто создал (из графа)
     if req.username == creator:                     # подтверждает тот же?
         log_event("action_denied", user["user_id"],
-                  {"action": "approve", "reason": "self_approval_forbidden"})
+                  {"action": "approve", "reason": "self_approval_forbidden"}, req.thread_id)
         raise HTTPException(status_code=403,
                             detail="Нельзя подтверждать собственную задачу. Нужен другой человек.")
 

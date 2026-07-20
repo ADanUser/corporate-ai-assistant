@@ -13,12 +13,13 @@ from datetime import datetime
 AUDIT_EVENTS = []
 
 
-def log_event(event_type: str, user_id: str, details: dict):
+def log_event(event_type: str, user_id: str, details: dict, thread_id: str = None):
     """Записывает одно событие в журнал."""
     event = {
         "event_type": event_type,
         "user_id": user_id,
         "details": details,
+        "thread_id": thread_id,
         "timestamp": datetime.now().isoformat(timespec="seconds"),
     }
     AUDIT_EVENTS.append(event)

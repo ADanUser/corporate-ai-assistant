@@ -9,6 +9,7 @@ class AssistantState(TypedDict):
     # ── Пришло в запросе (есть с самого начала) ──
     username: str          # кто спрашивает: alice / bob / admin
     question: str          # сам вопрос пользователя
+    thread_id: str         # идентификатор диалога (для логов и поиска истории)
 
     # ── Рождается по ходу графа (узлы кладут сюда) ──
     user: dict             # профиль из identity (id, role, department)

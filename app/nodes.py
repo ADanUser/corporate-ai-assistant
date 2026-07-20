@@ -52,7 +52,7 @@ def security_node(state: AssistantState):
     if is_injection:
         # Попытка инъекции — это security-событие, безопасник должен его видеть
         log_event("injection_in_query", state["user"]["user_id"],
-                  {"question_len": len(question)})
+                  {"question_len": len(question)}, state["thread_id"])
 
     return {"injection_in_query": is_injection}
 
@@ -108,14 +108,14 @@ def intent_node(state: AssistantState):
     except Exception as e:
         # Сеть/API упали — не роняем весь граф, тихо откатываемся к вопросу
         log_event("intent_llm_error", state["user"]["user_id"],
-                  {"error_type": type(e).__name__})
+                  {"error_type": type(e).__name__}, state["thread_id"])
         return {"intent": "question"}
 
     # Fallback: если модель вернула что-то за пределами двух допустимых значений —
     # не гадаем, откатываемся к безопасному "question" и логируем это
     if raw not in ("question", "action"):
         log_event("intent_unexpected_output", state["user"]["user_id"],
-                  {"raw_output": raw})
+                  {"raw_output": raw}, state["thread_id"])
         return {"intent": "question"}
 
     return {"intent": raw}
@@ -142,7 +142,7 @@ def search_node(state: AssistantState):
     security_flag = any(looks_like_injection(d["text"]) for d in found)
     if security_flag:
         log_event("security_flag", state["user"]["user_id"],
-                  {"reason": "possible_prompt_injection"})
+                  {"reason": "possible_prompt_injection"}, state["thread_id"])
 
     # кладём в рюкзак сразу два поля
     return {"found": found, "security_flag": security_flag}
@@ -179,13 +179,13 @@ def answer_node(state: AssistantState):
             raise ValueError("empty_answer")
 
         log_event("answer_generated", state["user"]["user_id"],
-                  {"source": best["source"]})
+                  {"source": best["source"]}, state["thread_id"])
 
     except Exception as e:
         # LLM недоступна/упала/вернула пусто — отдаём сырой текст документа.
         # Хуже по удобству, но безопасно: сырой текст не галлюцинирует.
         log_event("answer_llm_error", state["user"]["user_id"],
-                  {"error_type": type(e).__name__, "source": best["source"]})
+                  {"error_type": type(e).__name__, "source": best["source"]}, state["thread_id"])
         answer = best["text"]
 
     return {
@@ -209,7 +209,7 @@ def no_answer_node(state: AssistantState):
     Узел-отказ: ничего не нашли — честно об этом говорим.
     Раньше это была ветка 'if not found' внутри /ask.
     """
-    log_event("no_source_answer", state["user"]["user_id"], {})
+    log_event("no_source_answer", state["user"]["user_id"], {}, state["thread_id"])
     return {
         "answer": "В доступных мне документах нет ответа на этот вопрос.",
         "sources": [],
@@ -236,7 +236,7 @@ def action_node(state: AssistantState):
     # ── Проверка прав ДО паузы (это чтение, безопасно повторяется при возобновлении) ──
     if not role_can_do_action(role, "create_task"):
         log_event("action_denied", state["user"]["user_id"],
-                  {"action": "create_task", "reason": "role_not_allowed"})
+                  {"action": "create_task", "reason": "role_not_allowed"}, state["thread_id"])
         return {
             "answer": "У вашей роли нет прав на создание задач.",
             "sources": [],
@@ -253,13 +253,13 @@ def action_node(state: AssistantState):
 
     # --- Код НИЖЕ выполнится только ПОСЛЕ решения человека (важное — тут) ---
     if decision == "approve":
-        log_event("task_approved", state["user"]["user_id"], {"title": task_title[:100]})
+        log_event("task_approved", state["user"]["user_id"], {"title": task_title[:100]}, state["thread_id"])
         return {
             "answer": f"Готово. Задача создана после подтверждения: «{task_title}».",
             "sources": [],
         }
     else:
-        log_event("task_rejected", state["user"]["user_id"], {"title": task_title[:100]})
+        log_event("task_rejected", state["user"]["user_id"], {"title": task_title[:100]}, state["thread_id"])
         return {
             "answer": f"Действие отклонено. Задача «{task_title}» не создана.",
             "sources": [],
