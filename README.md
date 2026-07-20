@@ -77,21 +77,36 @@ uvicorn app.main:app --reload
 
 ```
 Запрос → Кто пользователь (identity)
-       → Фильтр по правам (permissions)   ← безопасность здесь
-       → Поиск в документах (retrieval)
-       → Ответ с источником  /  Черновик действия → Подтверждение
+       → Проверка запроса на инъекцию (security)  ← первый рубеж
+       → Определение намерения (intent): вопрос / действие
+       → [вопрос]  Фильтр по правам (permissions)  ← фильтр до поиска
+                 → Поиск в документах (search)
+                 → Ответ / «не найдено»
+       → [действие]  Черновик → Подтверждение человека
+       → Выходной guard (output_guard)  ← контроль ответа перед отдачей
        → Запись в журнал (audit)
 ```
 
 ## LangGraph-граф
 
 Конвейер запроса собран как управляемый граф. Прямые переходы — сплошные
-стрелки, развилка «найдено / не найдено» — пунктирные.
+стрелки, развилки (по безопасности, по намерению, «найдено / не найдено») —
+пунктирные.
+
+Ключевые рубежи безопасности видны прямо в графе:
+- `security_step` — проверка запроса на prompt injection **до** всего
+  остального; при срабатывании запрос уходит в `blocked_step`.
+- фильтр по ролям внутри `permission_step` — **до** поиска.
+- `output_guard` — единая точка выхода: все ответы по документам проходят
+  через неё перед отдачей пользователю.
 
 ```mermaid
 graph TD;
         __start__([<p>__start__</p>]):::first
         identity_step(identity_step)
+        security_step(security_step)
+        blocked_step(blocked_step)
+        output_guard(output_guard)
         intent_step(intent_step)
         permission_step(permission_step)
         search_step(search_step)
@@ -101,10 +116,14 @@ graph TD;
         __end__([<p>__end__</p>]):::last
         __start__ --> identity_step;
         action_step --> __end__;
-        answer_step --> __end__;
-        identity_step --> intent_step;
-        no_answer_step --> __end__;
+        answer_step --> output_guard;
+        blocked_step --> output_guard;
+        identity_step --> security_step;
+        no_answer_step --> output_guard;
+        output_guard --> __end__;
         permission_step --> search_step;
+        security_step -.-> blocked_step;
+        security_step -.-> intent_step;
         intent_step -.-> permission_step;
         intent_step -.-> action_step;
         search_step -.-> answer_step;
