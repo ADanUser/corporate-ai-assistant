@@ -21,6 +21,7 @@ from app.permissions import (
     DISABLED_ACTIONS,
 )
 from app.audit import log_event, AUDIT_EVENTS
+from app.limits import check_rate_limit, MAX_REQUESTS, WINDOW_SECONDS
 from app.graph import graph
 from typing import Literal
 
@@ -47,6 +48,17 @@ def ask(req: AskRequest):
     user = get_user(req.username)
     if not user:
         raise HTTPException(status_code=404, detail="Пользователь не найден")
+
+    # ── Лимит частоты: до графа и до любых обращений к LLM ──
+    # Смысл в том, чтобы отсечь поток ДО того, как он что-то потратит.
+    if not check_rate_limit(user["user_id"]):
+        log_event("rate_limit_exceeded", user["user_id"],
+                  {"limit": MAX_REQUESTS, "window_seconds": WINDOW_SECONDS}, None)
+        raise HTTPException(
+            status_code=429,       # 429 = Too Many Requests, стандартный код
+            detail=f"Слишком много запросов. Лимит: {MAX_REQUESTS} в "
+                   f"{WINDOW_SECONDS} секунд. Попробуйте позже.",
+        )
 
     # Сначала создаём thread_id — он нужен уже первому событию
     thread_id = f"task-{uuid.uuid4().hex[:8]}"
