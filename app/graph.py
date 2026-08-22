@@ -87,7 +87,8 @@ if __name__ == "__main__":
 
     # ── ШАГ 1: запускаем действие. Граф дойдёт до interrupt и ЗАМРЁТ ──
     result = graph.invoke(
-        {"username": "bob", "question": "создай задачу добавить логирование"},
+        {"username": "bob", "question": "создай задачу добавить логирование",
+         "thread_id": "demo-1"},
         config=config,
     )
     print("ПОСЛЕ ПЕРВОГО ВЫЗОВА (граф на паузе):")
@@ -103,7 +104,7 @@ if __name__ == "__main__":
 
     # ── ШАГ 2: человек подтверждает. Возобновляем ТОТ ЖЕ thread_id ──
     final = graph.invoke(
-        Command(resume="approve"),   # передаём решение человека
+        Command(resume={"decision": "approve", "approver": "admin"}),
         config=config,               # тот же config = то же "имя сохранёнки"
     )
     print("\nПОСЛЕ ВОЗОБНОВЛЕНИЯ (approve):")

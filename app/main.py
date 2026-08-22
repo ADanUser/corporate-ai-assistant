@@ -17,6 +17,7 @@ from app.identity import get_user
 from app.permissions import role_can_do_action
 from app.audit import log_event, AUDIT_EVENTS
 from app.graph import graph
+from typing import Literal
 
 app = FastAPI(title="Корпоративный AI-ассистент (портфолио)")
 
@@ -30,8 +31,8 @@ class AskRequest(BaseModel):
 
 class ApproveRequest(BaseModel):
     username: str
-    thread_id: str         # номерок, полученный из /ask
-    decision: str          # "approve" или "reject"
+    thread_id: str                           # номерок, полученный из /ask
+    decision: Literal["approve", "reject"]   # мусор отсекает Pydantic (422)
 
 
 # ================== ЭНДПОИНТ 1: ВОПРОС ИЛИ ДЕЙСТВИЕ ==================
@@ -115,8 +116,12 @@ def approve(req: ApproveRequest):
         raise HTTPException(status_code=403,
                             detail="Нельзя подтверждать собственную задачу. Нужен другой человек.")
 
-    # Проверки пройдены — возобновляем граф
-    final = graph.invoke(Command(resume=req.decision), config=config)
+    # Передаём не только решение, но и КТО его принял.
+    # user["user_id"] — из хранилища, а не из тела запроса.
+    final = graph.invoke(
+        Command(resume={"decision": req.decision, "approver": user["user_id"]}),
+        config=config,
+    )
 
     return {
         "status": "done",

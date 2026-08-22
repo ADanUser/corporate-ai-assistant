@@ -3,3 +3,5 @@ __pycache__/
 .env
 audit_log.jsonl
 .venv/
+.DS_Store
+*.code-workspace

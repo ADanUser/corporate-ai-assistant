@@ -3,13 +3,11 @@ from app.identity import get_user
 from app.data.documents import DOCUMENTS
 from app.permissions import filter_documents_by_role, role_can_do_action
 from app.retrieval import looks_like_injection
-from google.genai import types
-from app.search import semantic_search, _client_gemini
+from app.search import semantic_search
+from app.llm import generate_text
 from app.audit import log_event
 from app.graph_state import AssistantState
 
-
-_INTENT_MODEL = "gemini-3.1-flash-lite"
 
 INTENT_PROMPT = """Ты — классификатор запросов корпоративного ассистента.
 Определи, что хочет пользователь:
@@ -21,8 +19,6 @@ INTENT_PROMPT = """Ты — классификатор запросов корп
 Без пояснений, без кавычек, без точки.
 
 Запрос пользователя: {question}"""
-
-_ANSWER_MODEL = "gemini-3.1-flash-lite"
 
 ANSWER_PROMPT = """Ты — корпоративный ассистент. Ответь на вопрос сотрудника,
 опираясь ТОЛЬКО на текст документа ниже.
@@ -93,18 +89,9 @@ def intent_node(state: AssistantState):
     prompt = INTENT_PROMPT.format(question=question)
 
     try:
-        # Вызываем генеративную Gemini (не эмбеддинги!) как классификатор
-        response = _client_gemini.models.generate_content(
-            model=_INTENT_MODEL,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                # Отключаем "размышления": классификатору они не нужны,
-                # так быстрее и дешевле, плюс уходит warning про thought parts
-                thinking_config=types.ThinkingConfig(thinking_budget=0),
-            ),
-        )
-        # Защитная нормализация: убираем пробелы/переносы и приводим к нижнему регистру
-        raw = (response.text or "").strip().lower()
+        # Единая точка доступа к LLM; здесь она работает как классификатор.
+        # Защитная нормализация: приводим к нижнему регистру.
+        raw = generate_text(prompt).lower()
     except Exception as e:
         # Сеть/API упали — не роняем весь граф, тихо откатываемся к вопросу
         log_event("intent_llm_error", state["user"]["user_id"],
@@ -162,17 +149,7 @@ def answer_node(state: AssistantState):
     prompt = ANSWER_PROMPT.format(document=best["text"], question=question)
 
     try:
-        # Та же генеративная Gemini, что и в intent — переиспользуем клиент
-        response = _client_gemini.models.generate_content(
-            model=_ANSWER_MODEL,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                # Классификатору «мышление» не нужно; короткому ответу по
-                # одному абзацу — тоже. Экономим и убираем warning про thoughts.
-                thinking_config=types.ThinkingConfig(thinking_budget=0),
-            ),
-        )
-        answer = (response.text or "").strip()
+        answer = generate_text(prompt)
 
         # Пустой ответ модели считаем сбоем и уходим в fallback ниже
         if not answer:
@@ -244,26 +221,37 @@ def action_node(state: AssistantState):
 
     task_title = state["question"]
 
-    # ⏸ ПАУЗА: показываем человеку, что собираемся сделать, и ждём решения.
-    decision = interrupt({
+        # ⏸ ПАУЗА: показываем человеку, что собираемся сделать, и ждём решения.
+    resume = interrupt({
         "type": "approval_request",
         "message": "Подтвердите создание задачи",
         "task_title": task_title,
     })
 
-    # --- Код НИЖЕ выполнится только ПОСЛЕ решения человека (важное — тут) ---
-    if decision == "approve":
-        log_event("task_approved", state["user"]["user_id"], {"title": task_title[:100]}, state["thread_id"])
-        return {
-            "answer": f"Готово. Задача создана после подтверждения: «{task_title}».",
-            "sources": [],
-        }
-    else:
-        log_event("task_rejected", state["user"]["user_id"], {"title": task_title[:100]}, state["thread_id"])
+    # --- Код НИЖЕ выполнится только ПОСЛЕ решения человека ---
+
+    # resume приходит снаружи (HTTP) — это НЕДОВЕРЕННЫЕ данные.
+    # Ждём строго {"decision": ..., "approver": ...}; всё прочее — не approve.
+    decision = resume.get("decision") if isinstance(resume, dict) else None
+    approver = resume.get("approver") if isinstance(resume, dict) else None
+
+    # Fail-safe default: задача создаётся ТОЛЬКО при явном "approve".
+    if decision != "approve":
+        log_event("task_rejected", state["user"]["user_id"],
+                  {"title": task_title[:100], "approver": approver},
+                  state["thread_id"])
         return {
             "answer": f"Действие отклонено. Задача «{task_title}» не создана.",
             "sources": [],
         }
+
+    log_event("task_approved", state["user"]["user_id"],
+              {"title": task_title[:100], "approver": approver},
+              state["thread_id"])
+    return {
+        "answer": f"Готово. Задача создана после подтверждения ({approver}): «{task_title}».",
+        "sources": [],
+    }
 
 def output_guard(state: AssistantState):
     """

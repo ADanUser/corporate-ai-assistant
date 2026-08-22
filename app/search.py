@@ -25,8 +25,9 @@ if not _api_key:
         "GEMINI_API_KEY=твой_ключ"
     )
 
-# Клиент Gemini для запросов эмбеддингов
-_client_gemini = genai.Client(api_key=_api_key)
+# Клиент Gemini только для эмбеддингов. Наружу не экспортируется:
+# генерация ответов живёт в app/llm.py.
+_client_embed = genai.Client(api_key=_api_key)
 _EMBED_MODEL = "gemini-embedding-001"
 
 # Векторная база в памяти. cosine — расстояние по смыслу:
@@ -51,7 +52,7 @@ def _embed(text: str, is_query: bool):
     Разные task_type улучшают качество поиска — так советует Google.
     """
     task = "RETRIEVAL_QUERY" if is_query else "RETRIEVAL_DOCUMENT"
-    result = _client_gemini.models.embed_content(
+    result = _client_embed.models.embed_content(
         model=_EMBED_MODEL,
         contents=text,
         config=types.EmbedContentConfig(task_type=task),
@@ -85,6 +86,7 @@ def semantic_search(query: str, allowed_docs):
     Ищет документы по смыслу, но ТОЛЬКО среди разрешённых пользователю.
     allowed_docs уже отфильтрован по роли в permissions.py ДО этого вызова.
     """
+    _ensure_index()
     allowed_ids = [doc["id"] for doc in allowed_docs]
     if not allowed_ids:
         return []
@@ -109,5 +111,16 @@ def semantic_search(query: str, allowed_docs):
     return relevant
 
 
-# Строим индекс при старте сервиса (один раз обращаемся к Gemini за векторами)
-_build_index()
+# Флаг: построен ли уже индекс. Строим ЛЕНИВО — при первом поиске,
+# а не при импорте модуля. Раньше недоступный Gemini ронял приложение
+# на строке `import`, и не запускалось вообще ничего — включая ветку
+# действий, которая к поиску отношения не имеет.
+_index_ready = False
+
+
+def _ensure_index():
+    """Строит индекс при первой необходимости. Повторные вызовы — no-op."""
+    global _index_ready
+    if not _index_ready:
+        _build_index()
+        _index_ready = True
