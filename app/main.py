@@ -14,7 +14,12 @@ from pydantic import BaseModel
 import uuid                              # для генерации уникального thread_id
 from langgraph.types import Command      # для возобновления графа
 from app.identity import get_user
-from app.permissions import role_can_do_action
+from app.permissions import (
+    role_can_do_action,
+    disable_action,
+    enable_action,
+    DISABLED_ACTIONS,
+)
 from app.audit import log_event, AUDIT_EVENTS
 from app.graph import graph
 from typing import Literal
@@ -129,7 +134,45 @@ def approve(req: ApproveRequest):
     }
 
 
-# ================== ЭНДПОИНТ 3: ПОСМОТРЕТЬ ЖУРНАЛ ==================
+# ================== ЭНДПОИНТ 3: АВАРИЙНОЕ УПРАВЛЕНИЕ ==================
+
+class KillSwitchRequest(BaseModel):
+    username: str
+    action_name: str       # какой инструмент, например "create_task"
+    enabled: bool          # False = выключить, True = включить обратно
+
+
+@app.post("/admin/tools")
+def toggle_tool(req: KillSwitchRequest):
+    """
+    Аварийный выключатель инструмента. Только для Admin.
+    Позволяет отключить сломанный инструмент без правки кода и деплоя.
+    """
+    user = get_user(req.username)
+    if not user:
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
+
+    # Управлять выключателем может только Admin — это операция безопасности
+    if user["role"] != "Admin":
+        log_event("action_denied", user["user_id"],
+                  {"action": "toggle_tool", "reason": "role_not_allowed"}, None)
+        raise HTTPException(status_code=403,
+                            detail="Управление инструментами доступно только Admin.")
+
+    if req.enabled:
+        enable_action(req.action_name)
+        event = "tool_enabled"
+    else:
+        disable_action(req.action_name)
+        event = "tool_disabled"
+
+    # Включение и выключение инструмента — событие безопасности, логируем оба
+    log_event(event, user["user_id"], {"action": req.action_name}, None)
+
+    return {"status": "ok", "disabled_actions": sorted(DISABLED_ACTIONS)}
+
+
+# ================== ЭНДПОИНТ 4: ПОСМОТРЕТЬ ЖУРНАЛ ==================
 
 @app.get("/audit")
 def get_audit():

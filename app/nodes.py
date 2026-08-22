@@ -1,7 +1,11 @@
 from langgraph.types import interrupt
 from app.identity import get_user
 from app.data.documents import DOCUMENTS
-from app.permissions import filter_documents_by_role, role_can_do_action
+from app.permissions import (
+    filter_documents_by_role,
+    role_can_do_action,
+    action_is_disabled,
+)
 from app.retrieval import looks_like_injection
 from app.search import semantic_search
 from app.llm import generate_text
@@ -209,6 +213,17 @@ def action_node(state: AssistantState):
     interrupt() замораживает граф и ждёт решения человека.
     """
     role = state["user"]["role"]
+    # ── Проверка 0: не отключён ли инструмент аварийно ──
+    # Идёт ПЕРЕД проверкой прав: если инструмент выключен, роль не важна.
+    if action_is_disabled("create_task"):
+        log_event("action_blocked", state["user"]["user_id"],
+                  {"action": "create_task", "reason": "temporarily_disabled"},
+                  state["thread_id"])
+        return {
+            "answer": "Создание задач временно отключено администратором. "
+                      "Попробуйте позже.",
+            "sources": [],
+        }
 
     # ── Проверка прав ДО паузы (это чтение, безопасно повторяется при возобновлении) ──
     if not role_can_do_action(role, "create_task"):

@@ -36,3 +36,24 @@ def role_can_do_action(user_role: str, action_name: str) -> bool:
     """
     allowed_roles = ACTION_PERMISSIONS.get(action_name, [])
     return user_role in allowed_roles
+
+# ── Аварийный выключатель инструментов (kill switch) ──
+# Инцидент: инструмент сломался или используется во вред. Админ выключает
+# его здесь — код менять не нужно, остальные инструменты работают дальше.
+# Это НЕ права доступа: выключенный инструмент недоступен всем, даже Admin.
+DISABLED_ACTIONS = set()
+
+
+def action_is_disabled(action_name: str) -> bool:
+    """Проверяет, не отключён ли инструмент аварийно."""
+    return action_name in DISABLED_ACTIONS
+
+
+def disable_action(action_name: str):
+    """Аварийно выключает инструмент."""
+    DISABLED_ACTIONS.add(action_name)
+
+
+def enable_action(action_name: str):
+    """Возвращает инструмент в строй."""
+    DISABLED_ACTIONS.discard(action_name)
