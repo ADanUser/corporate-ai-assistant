@@ -77,7 +77,7 @@ builder.add_edge("no_answer_step", "output_guard")
 builder.add_edge("output_guard", END)
 
 # Ветка действий → конец
-builder.add_edge("action_step", END)
+builder.add_edge("action_step", "output_guard")
 
 checkpointer = InMemorySaver()
 graph = builder.compile(checkpointer=checkpointer)

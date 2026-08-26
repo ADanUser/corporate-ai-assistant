@@ -234,6 +234,16 @@ def answer_node(state: AssistantState):
                   {"error_type": type(e).__name__, "source": best["source"]}, state["thread_id"])
         answer = best["text"]
 
+    if "нет ответа на этот вопрос" in answer.lower():
+        log_event("no_source_answer", state["user"]["user_id"],
+                  {"reason": "document_found_but_no_answer",
+                   "source": best["source"]}, state["thread_id"])
+        return {
+            "answer": responses.no_source_answer(),
+            "sources": [],           # нерелевантный источник не показываем
+            "answer_type": responses.NO_SOURCE,
+        }
+
     return {
         "answer": responses.knowledge_answer(answer, best["source"]),
         "sources": [best["source"]],
