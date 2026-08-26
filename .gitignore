@@ -5,3 +5,4 @@ audit_log.jsonl
 .venv/
 .DS_Store
 *.code-workspace
+screenshots/
