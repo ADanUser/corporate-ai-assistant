@@ -18,6 +18,7 @@ class AssistantState(TypedDict):
     security_flag: bool    # похоже ли на prompt injection (из search)
     injection_in_query: bool   # инъекция в ЗАПРОСЕ пользователя (из security)
     intent: str            # "question" или "action" (кладёт intent_node)
+    selected_tool: str     # имя инструмента, предложенное моделью (tool_router)
 
     # ── Финальный результат ──
     answer: str            # текст ответа

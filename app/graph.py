@@ -15,6 +15,7 @@ from app.nodes import (
     route_after_security,    
     blocked_node,            
     output_guard,            # выходной guard
+    tool_router_node,        # выбор инструмента моделью
 )
 
 builder = StateGraph(AssistantState)
@@ -30,10 +31,10 @@ builder.add_node("search_step", search_node)
 builder.add_node("answer_step", answer_node)
 builder.add_node("no_answer_step", no_answer_node)  
 builder.add_node("action_step", action_node) 
+builder.add_node("tool_router_step", tool_router_node)
 
 # Рёбра
 builder.add_edge(START, "identity_step")
-# После identity — сначала проверка безопасности запроса
 builder.add_edge("identity_step", "security_step")
 
 # Развилка: инъекция → blocked, чисто → intent
@@ -48,17 +49,20 @@ builder.add_conditional_edges(
 
 builder.add_edge("blocked_step", "output_guard")
 
-# Развилка по intent: вопрос → permission, действие → action
+# Развилка по intent: вопрос → permission, действие → выбор инструмента
 builder.add_conditional_edges(
     "intent_step",
     route_after_intent,
     {
         "permission_step": "permission_step",
-        "action_step": "action_step",
+        "tool_router_step": "tool_router_step",
     },
 )
 
-# Ветка вопросов — БЕЗ ИЗМЕНЕНИЙ (как у тебя уже работает)
+# Маршрутизатор выбрал инструмент → узел исполнения
+builder.add_edge("tool_router_step", "action_step")
+
+# Ветка вопросов
 builder.add_edge("permission_step", "search_step")
 builder.add_conditional_edges(
     "search_step",
@@ -72,7 +76,7 @@ builder.add_edge("answer_step", "output_guard")
 builder.add_edge("no_answer_step", "output_guard")
 builder.add_edge("output_guard", END)
 
-# Ветка действий (пока заглушка) → конец
+# Ветка действий → конец
 builder.add_edge("action_step", END)
 
 checkpointer = InMemorySaver()

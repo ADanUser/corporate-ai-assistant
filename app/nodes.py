@@ -3,8 +3,14 @@ from app.identity import get_user
 from app.data.documents import DOCUMENTS
 from app.permissions import (
     filter_documents_by_role,
-    role_can_do_action,
     action_is_disabled,
+)
+from app.tools import (
+    get_tool,
+    tool_allows_role,
+    tool_needs_approval,
+    describe_tools_for_prompt,
+    execute_check_vacation_balance,
 )
 from app.retrieval import looks_like_injection
 from app.search import semantic_search
@@ -15,15 +21,38 @@ from app import responses
 
 
 INTENT_PROMPT = """Ты — классификатор запросов корпоративного ассистента.
-Определи, что хочет пользователь:
-- "question" — спрашивает информацию, просит объяснить, задаёт вопрос
-  (даже если в вопросе есть слова «создать», «сделать» — это всё равно вопрос).
-- "action" — просит ВЫПОЛНИТЬ действие: создать задачу, завести заявку.
+Определи, ГДЕ лежит ответ на запрос сотрудника.
+
+- "question" — ответ есть в документах компании: правила, политики,
+  регламенты, инструкции. Общий вопрос «как устроено», «что положено»,
+  «какой порядок».
+- "action" — ответ требует обращения к рабочей системе: создать задачу,
+  посмотреть ЛИЧНЫЕ данные сотрудника (его остаток отпуска, его задачи).
+  Признак: в запросе есть «мой», «у меня», «мне» про личные данные,
+  либо просьба что-то создать или изменить.
+
+Примеры:
+- «сколько дней отпуска положено сотруднику» → question (это правило)
+- «сколько у меня осталось дней отпуска» → action (это личные данные)
+- «как оформить командировку» → question
+- «создай задачу проверить бэкапы» → action
 
 Ответь РОВНО одним словом: question или action.
 Без пояснений, без кавычек, без точки.
 
 Запрос пользователя: {question}"""
+
+TOOL_PROMPT = """Ты — маршрутизатор инструментов корпоративного ассистента.
+Сотрудник просит выполнить действие. Определи, какой инструмент нужен.
+
+Доступные инструменты:
+{tool_list}
+
+Ответь РОВНО именем инструмента из списка выше.
+Без пояснений, без кавычек, без точки.
+Если ни один не подходит — ответь: none
+
+Запрос сотрудника: {question}"""
 
 ANSWER_PROMPT = """Ты — корпоративный ассистент. Ответь на вопрос сотрудника,
 опираясь ТОЛЬКО на текст документа ниже.
@@ -120,6 +149,34 @@ def intent_node(state: AssistantState):
     return {"intent": raw}
 
 
+def tool_router_node(state: AssistantState):
+    """
+    Узел выбора инструмента: модель предлагает, какой tool применить.
+
+    Важно: модель здесь ТОЛЬКО ПРЕДЛАГАЕТ имя. Права, kill switch и
+    порог approval проверяет action_node по карточке из реестра.
+    Даже если модель выдумает инструмент — get_tool вернёт None
+    и действие не выполнится (deny-by-default).
+    """
+    prompt = TOOL_PROMPT.format(
+        tool_list=describe_tools_for_prompt(),
+        question=state["question"],
+    )
+
+    try:
+        raw = generate_text(prompt).lower().strip()
+    except Exception as e:
+        # Сеть/API упали — не роняем граф. Пустое имя приведёт к
+        # честному отказу в action_node, а не к случайному действию.
+        log_event("tool_router_llm_error", state["user"]["user_id"],
+                  {"error_type": type(e).__name__}, state["thread_id"])
+        return {"selected_tool": ""}
+
+    log_event("tool_selected", state["user"]["user_id"],
+              {"selected_tool": raw}, state["thread_id"])
+    return {"selected_tool": raw}
+
+
 def permission_node(state: AssistantState):
     """
     Узел permission: фильтрует документы по роли пользователя.
@@ -213,53 +270,89 @@ def route_after_intent(state: AssistantState) -> str:
     Читает поле intent, которое положил intent_node.
     """
     if state["intent"] == "action":
-        return "action_step"        # → ветка действий (пока заглушка)
-    return "permission_step"        # → ветка вопросов
+        return "tool_router_step"   # → сначала выбор инструмента
+    return "permission_step"
 
 
 def action_node(state: AssistantState):
     """
-    Узел действия: проверяет право на создание, затем ставит паузу на подтверждение.
-    interrupt() замораживает граф и ждёт решения человека.
+    Узел действия: единый конвейер выполнения инструмента.
+
+    Порядок проверок — от самого общего к самому частному:
+      1. существует ли инструмент       (нет карточки → нет действия)
+      2. не выключен ли аварийно        (kill switch важнее любых прав)
+      3. разрешён ли роли               (RBAC)
+      4. нужен ли человек               (выводится из risk_level)
+
+    Узел описывает ПОРЯДОК проверок, а сами правила лежат в app/tools.py.
     """
     role = state["user"]["role"]
-    # ── Проверка 0: не отключён ли инструмент аварийно ──
-    # Идёт ПЕРЕД проверкой прав: если инструмент выключен, роль не важна.
-    if action_is_disabled("create_task"):
-        log_event("action_blocked", state["user"]["user_id"],
-                  {"action": "create_task", "reason": "temporarily_disabled"},
+    # Имя инструмента предложил tool_router_node. Это НЕДОВЕРЕННЫЕ данные:
+    # модель могла выдумать имя, вернуть мусор или упасть. Проверка 1 ниже
+    # отсекает всё, чего нет в реестре.
+    tool_name = state.get("selected_tool", "")           
+
+    # ── Проверка 1: существует ли такой инструмент ──
+    # deny-by-default: нет карточки — нет правил — нет выполнения.
+    tool = get_tool(tool_name)
+    if tool is None:
+        log_event("action_denied", state["user"]["user_id"],
+                  {"action": tool_name, "reason": "unknown_tool"},
                   state["thread_id"])
         return {
-            "answer": responses.tool_disabled_answer("создание задач"),
+            "answer": responses.denied_answer(tool_name),
+            "sources": [],
+            "answer_type": responses.DENIED,
+        }
+
+    # ── Проверка 2: не отключён ли инструмент аварийно ──
+    # Идёт ПЕРЕД проверкой прав: если инструмент выключен, роль не важна.
+    if action_is_disabled(tool.name):
+        log_event("action_blocked", state["user"]["user_id"],
+                  {"action": tool.name, "reason": "temporarily_disabled"},
+                  state["thread_id"])
+        return {
+            "answer": responses.tool_disabled_answer(tool.title),
             "sources": [],
             "answer_type": responses.TOOL_DISABLED,
         }
 
-    # ── Проверка прав ДО паузы (это чтение, безопасно повторяется при возобновлении) ──
-    if not role_can_do_action(role, "create_task"):
+    # ── Проверка 3: права роли (читаем из карточки, не из отдельной карты) ──
+    if not tool_allows_role(tool, role):
         log_event("action_denied", state["user"]["user_id"],
-                  {"action": "create_task", "reason": "role_not_allowed"}, state["thread_id"])
+                  {"action": tool.name, "reason": "role_not_allowed"},
+                  state["thread_id"])
         return {
-            "answer": responses.denied_answer("создание задач"),
+            "answer": responses.denied_answer(tool.title),
             "sources": [],
             "answer_type": responses.DENIED,
         }
 
     task_title = state["question"]
 
-    # ⏸ ПАУЗА: показываем человеку полный preview действия и ждём решения.
-    # По ТЗ карточка отвечает на пять вопросов: что за действие, каким
-    # инструментом, с какими данными, насколько рискованно, кто запросил.
-    # Подтверждающий не должен догадываться — он должен видеть.
+        # ── Проверка 4: нужен ли человек ──
+    # Решение выводится из risk_level карточки, а не написано здесь руками.
+    if not tool_needs_approval(tool):
+        log_event("tool_executed", state["user"]["user_id"],
+                  {"action": tool.name, "risk_level": tool.risk_level},
+                  state["thread_id"])
+        return {
+            "answer": execute_tool(tool, state),
+            "sources": [],
+            "answer_type": responses.ACTION_DONE,
+        }
+
+    # ⏸ ПАУЗА: карточка approval собирается ИЗ КАРТОЧКИ ИНСТРУМЕНТА.
     resume = interrupt({
         "type": "approval_request",
         "message": "Подтвердите создание задачи",
-        "tool": "create_task",
+        "tool": tool.name,
+        "description": tool.description,
         "task_title": task_title,
         "requested_by": state["user"]["user_id"],
         "requester_role": role,
-        "risk_level": "medium",
-        "effects": "Будет создана задача в трекере. Отмена — вручную.",
+        "risk_level": tool.risk_level,
+        "effects": tool.effects,
         "approval_required": True,
     })
 
@@ -289,6 +382,22 @@ def action_node(state: AssistantState):
         "sources": [],
         "answer_type": responses.ACTION_DONE,
     }
+
+
+def execute_tool(tool, state: AssistantState) -> str:
+    """
+    Исполняет инструмент низкого риска и возвращает текст ответа.
+
+    Диспетчер отделён от action_node намеренно: узел отвечает за ПРОВЕРКИ,
+    эта функция — за ВЫПОЛНЕНИЕ. Смешивать нельзя, иначе новый инструмент
+    придётся вписывать в середину цепочки проверок безопасности.
+    """
+    if tool.name == "check_vacation_balance":
+        return execute_check_vacation_balance(state["user"])
+
+    # Инструмент есть в реестре, но реализации нет — честно об этом говорим,
+    # а не делаем вид, что выполнили.
+    return f"Инструмент «{tool.title}» пока не реализован."
 
 
 def output_guard(state: AssistantState):

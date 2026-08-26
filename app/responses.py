@@ -66,12 +66,17 @@ def tool_disabled_answer(action: str) -> str:
     )
 
 
-def action_done_answer(title: str, approver: str) -> str:
+def action_done_answer(title: str, approver: str = None) -> str:
     """
     Подтверждённое действие.
-    ЧТО было сделано и КЕМ подтверждено — иначе разбирать инцидент
-    придётся по логам, а не по переписке.
+    approver=None означает инструмент низкого риска, выполненный без
+    человека.
     """
+    if approver is None:
+        return (
+            f"Готово. Создана задача: «{title}».\n"
+            "Действие низкого риска — выполнено без подтверждения."
+        )
     return (
         f"Готово. Создана задача: «{title}».\n"
         f"Действие выполнено после подтверждения пользователем {approver}."
