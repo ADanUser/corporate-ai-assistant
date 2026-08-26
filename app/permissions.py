@@ -11,12 +11,11 @@ def filter_documents_by_role(documents, user_role):
     return allowed
 
 
-# ── Права на ДЕЙСТВИЯ (кто какое действие может выполнять) ──
-# Это зачаток tool registry: правила действий лежат данными в одном месте,
-# а не размазаны if-ами по main.py.
+# ── Право на подтверждение чужих действий ──
+# Approve — не инструмент, а решение о чужом инструменте, поэтому живёт
+# здесь, а не в реестре tools.py.
 ACTION_PERMISSIONS = {
-    "create_task": ["Employee", "Manager", "Admin"],  # черновик может предложить любой
-    "approve":     ["Manager", "Admin"],              # подтверждать — только старше
+    "approve": ["Manager", "Admin"],
 }
 
 

@@ -76,40 +76,8 @@ builder.add_edge("answer_step", "output_guard")
 builder.add_edge("no_answer_step", "output_guard")
 builder.add_edge("output_guard", END)
 
-# Ветка действий → конец
+# Ветка действий тоже проходит через выходной guard
 builder.add_edge("action_step", "output_guard")
 
 checkpointer = InMemorySaver()
 graph = builder.compile(checkpointer=checkpointer)
-
-
-if __name__ == "__main__":
-    from langgraph.types import Command
-
-    # thread_id — "имя сохранёнки". Один и тот же id = продолжаем тот же граф.
-    config = {"configurable": {"thread_id": "demo-1"}}
-
-    # ── ШАГ 1: запускаем действие. Граф дойдёт до interrupt и ЗАМРЁТ ──
-    result = graph.invoke(
-        {"username": "bob", "question": "создай задачу добавить логирование",
-         "thread_id": "demo-1"},
-        config=config,
-    )
-    print("ПОСЛЕ ПЕРВОГО ВЫЗОВА (граф на паузе):")
-
-    # Информацию о паузе достаём из состояния графа
-    snapshot = graph.get_state(config)
-    print("  Граф ждёт на узлах:", snapshot.next)
-
-    # Карточка approval лежит внутри задачи: tasks[0].interrupts[0].value
-    card = snapshot.tasks[0].interrupts[0].value
-    print("  Сообщение:", card["message"])
-    print("  Задача:", card["task_title"])
-
-    # ── ШАГ 2: человек подтверждает. Возобновляем ТОТ ЖЕ thread_id ──
-    final = graph.invoke(
-        Command(resume={"decision": "approve", "approver": "admin"}),
-        config=config,               # тот же config = то же "имя сохранёнки"
-    )
-    print("\nПОСЛЕ ВОЗОБНОВЛЕНИЯ (approve):")
-    print("  ОТВЕТ:", final["answer"])

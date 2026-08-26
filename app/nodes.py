@@ -115,10 +115,9 @@ def blocked_node(state: AssistantState):
 def identity_node(state: AssistantState):
     """
     Узел identity: по username достаёт профиль пользователя.
-    Раньше это была строка: user = get_user(req.username)
     """
-    user = get_user(state["username"])   # достаём username из рюкзака
-    return {"user": user}                # кладём user обратно в рюкзак
+    user = get_user(state["username"])
+    return {"user": user}                
 
 def intent_node(state: AssistantState):
     """
@@ -180,9 +179,8 @@ def tool_router_node(state: AssistantState):
 def permission_node(state: AssistantState):
     """
     Узел permission: фильтрует документы по роли пользователя.
-    Раньше: allowed_docs = filter_documents_by_role(DOCUMENTS, user["role"])
     """
-    role = state["user"]["role"]         # user положил предыдущий узел
+    role = state["user"]["role"]         
     allowed = filter_documents_by_role(DOCUMENTS, role)
     return {"allowed_docs": allowed}     # кладём результат в рюкзак
 
@@ -207,8 +205,6 @@ def search_node(state: AssistantState):
 def answer_node(state: AssistantState):
     """
     Узел answer (G в RAG): генерирует краткий ответ из найденного документа.
-    Раньше отдавал сырой текст документа целиком; теперь LLM формулирует
-    ответ на КОНКРЕТНЫЙ вопрос по этому документу.
     При сбое LLM — откат на сырой текст (graceful degradation).
     Сюда попадаем ТОЛЬКО когда что-то найдено (гарантирует route_after_search).
     """
@@ -264,7 +260,6 @@ def route_after_search(state: AssistantState) -> str:
 def no_answer_node(state: AssistantState):
     """
     Узел-отказ: ничего не нашли — честно об этом говорим.
-    Раньше это была ветка 'if not found' внутри /ask.
     """
     log_event("no_source_answer", state["user"]["user_id"], {}, state["thread_id"])
     return {

@@ -1,11 +1,10 @@
 """
-ГЛАВНЫЙ ФАЙЛ. Здесь собирается весь конвейер и запускается веб-сервис.
+Точка входа: FastAPI-приложение и HTTP-эндпоинты ассистента.
 
-Запуск (из папки corporate-assistant):
+Запуск:
     uvicorn app.main:app --reload
 
-После запуска открой в браузере:  http://localhost:8000/docs
-Там будет удобная страница, где можно потыкать все запросы мышкой.
+Интерактивная документация: http://localhost:8000/docs
 """
 
 from fastapi import FastAPI, HTTPException
@@ -25,7 +24,7 @@ from app.limits import check_rate_limit, MAX_REQUESTS, WINDOW_SECONDS
 from app.graph import graph
 from typing import Literal
 
-app = FastAPI(title="Корпоративный AI-ассистент (портфолио)")
+app = FastAPI(title="Корпоративный AI-ассистент")
 
 
 # ---- Описание того, что приходит в запросах (валидация за нас) ----
@@ -90,9 +89,8 @@ def ask(req: AskRequest):
     # Иначе граф дошёл до конца — обычный ответ
     answer_type = result.get("answer_type", "unknown")
 
-    # Логируем ЧЕМ закончился запрос. Раньше в журнале был только вход
-    # (question_received) — по нему нельзя было посчитать, сколько запросов
-    # упёрлось в отказ, а сколько получило ответ по документу.
+    # Логируем, чем закончился запрос: по answer_type считается,
+    # сколько запросов упёрлось в отказ, а сколько получило ответ.
     log_event("answer_delivered", user["user_id"],
               {"answer_type": answer_type}, thread_id)
     
@@ -202,10 +200,10 @@ def toggle_tool(req: KillSwitchRequest):
 
 @app.get("/audit")
 def get_audit():
-    """Показывает журнал всех событий. Удобно для демо и отладки."""
+    """Показывает журнал всех событий."""
     return {"events": AUDIT_EVENTS}
 
 
 @app.get("/")
 def root():
-    return {"message": "Ассистент работает. Открой /docs, чтобы потыкать запросы."}
+    return {"message": "Ассистент работает. Документация: /docs"}
