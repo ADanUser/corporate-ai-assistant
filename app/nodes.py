@@ -11,6 +11,7 @@ from app.tools import (
     tool_needs_approval,
     describe_tools_for_prompt,
     execute_check_vacation_balance,
+    execute_create_task,
 )
 from app.retrieval import looks_like_injection
 from app.search import semantic_search
@@ -135,7 +136,9 @@ def intent_node(state: AssistantState):
     except Exception as e:
         # Сеть/API упали — не роняем весь граф, тихо откатываемся к вопросу
         log_event("intent_llm_error", state["user"]["user_id"],
-                  {"error_type": type(e).__name__}, state["thread_id"])
+                  {"error_type": type(e).__name__,
+                   "error": str(e)[:200]}, 
+                   state["thread_id"])
         return {"intent": "question"}
 
     # Fallback: если модель вернула что-то за пределами двух допустимых значений —
@@ -168,7 +171,9 @@ def tool_router_node(state: AssistantState):
         # Сеть/API упали — не роняем граф. Пустое имя приведёт к
         # честному отказу в action_node, а не к случайному действию.
         log_event("tool_router_llm_error", state["user"]["user_id"],
-                  {"error_type": type(e).__name__}, state["thread_id"])
+                  {"error_type": type(e).__name__,
+                   "error": str(e)[:200]},        # ← причина сбоя, а не только класс
+                   state["thread_id"])
         return {"selected_tool": ""}
 
     log_event("tool_selected", state["user"]["user_id"],
@@ -182,7 +187,7 @@ def permission_node(state: AssistantState):
     """
     role = state["user"]["role"]         
     allowed = filter_documents_by_role(DOCUMENTS, role)
-    return {"allowed_docs": allowed}     # кладём результат в рюкзак
+    return {"allowed_docs": allowed}     
 
 
 def search_node(state: AssistantState):
@@ -227,7 +232,10 @@ def answer_node(state: AssistantState):
         # LLM недоступна/упала/вернула пусто — отдаём сырой текст документа.
         # Хуже по удобству, но безопасно: сырой текст не галлюцинирует.
         log_event("answer_llm_error", state["user"]["user_id"],
-                  {"error_type": type(e).__name__, "source": best["source"]}, state["thread_id"])
+                  {"error_type": type(e).__name__,
+                   "error": str(e)[:200],         # ← причина сбоя, а не только класс
+                   "source": best["source"]},
+                   state["thread_id"])
         answer = best["text"]
 
     if "нет ответа на этот вопрос" in answer.lower():
@@ -378,6 +386,10 @@ def action_node(state: AssistantState):
             "sources": [],
             "answer_type": responses.ACTION_REJECTED,
         }
+    
+    # Побочный эффект выполняется ЗДЕСЬ и только здесь — после явного approve.
+    # Отдельный вызов, а не текст ответа: иначе его невозможно посчитать в evals.
+    execute_create_task(task_title, state["user"])
 
     log_event("task_approved", state["user"]["user_id"],
               {"title": task_title[:100], "approver": approver},
