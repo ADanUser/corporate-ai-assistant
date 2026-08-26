@@ -88,9 +88,18 @@ def ask(req: AskRequest):
         }
 
     # Иначе граф дошёл до конца — обычный ответ
+    answer_type = result.get("answer_type", "unknown")
+
+    # Логируем ЧЕМ закончился запрос. Раньше в журнале был только вход
+    # (question_received) — по нему нельзя было посчитать, сколько запросов
+    # упёрлось в отказ, а сколько получило ответ по документу.
+    log_event("answer_delivered", user["user_id"],
+              {"answer_type": answer_type}, thread_id)
+    
     return {
         "status": "done",
         "answer": result["answer"],
+        "answer_type": answer_type,
         "sources": result["sources"],
         "security_flag": result.get("security_flag", False),
     }
@@ -140,9 +149,14 @@ def approve(req: ApproveRequest):
         config=config,
     )
 
+    answer_type = final.get("answer_type", "unknown")
+    log_event("answer_delivered", user["user_id"],
+              {"answer_type": answer_type}, req.thread_id)
+
     return {
         "status": "done",
         "answer": final["answer"],
+        "answer_type": answer_type,
     }
 
 

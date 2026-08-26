@@ -22,3 +22,4 @@ class AssistantState(TypedDict):
     # ── Финальный результат ──
     answer: str            # текст ответа
     sources: list          # источники ответа
+    answer_type: str       # тип ответа (см. app/responses.py) — для логов и evals
