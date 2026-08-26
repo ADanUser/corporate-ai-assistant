@@ -96,6 +96,7 @@ def ask(req: AskRequest):
     
     return {
         "status": "done",
+        "thread_id": thread_id,
         "answer": result["answer"],
         "answer_type": answer_type,
         "sources": result["sources"],

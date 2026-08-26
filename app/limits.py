@@ -44,3 +44,12 @@ def check_rate_limit(user_id: str) -> bool:
     recent.append(now)
     _history[user_id] = recent
     return True
+
+
+def reset_limits():
+    """
+    Сбрасывает счётчики. Нужно тестам: 30+ кейсов подряд от одного
+    пользователя иначе упрутся в лимит и провалятся не по своей вине.
+    В проде не вызывается.
+    """
+    _history.clear()
