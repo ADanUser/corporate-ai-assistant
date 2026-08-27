@@ -1,0 +1,27 @@
+name: tests
+
+# Гоняем на каждый push и на каждый pull request в main.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  fast-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Установить зависимости
+        run: pip install -r requirements.txt
+
+      # Ключ GEMINI_API_KEY здесь НЕ нужен: тесты проверяют только
+      # детерминированные слои — права, реестр инструментов, детектор
+      # инъекций, kill switch. Обращений к модели в них нет.
+      - name: Быстрые тесты
+        run: pytest -q
