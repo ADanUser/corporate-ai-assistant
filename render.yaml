@@ -1,7 +1,7 @@
 services:
   - type: web
     name: corporate-ai-assistant
-    env: python
+    runtime: python
     plan: free
     region: frankfurt
     buildCommand: pip install -r requirements.txt
@@ -11,4 +11,8 @@ services:
       - key: PYTHON_VERSION
         value: 3.13.0
       - key: GEMINI_API_KEY
+        sync: false
+      - key: GOOGLE_SERVICE_ACCOUNT_JSON
+        sync: false
+      - key: GOOGLE_SHEET_ID
         sync: false

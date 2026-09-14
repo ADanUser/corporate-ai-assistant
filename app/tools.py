@@ -11,6 +11,8 @@ Tool registry — реестр инструментов ассистента.
 
 from dataclasses import dataclass
 
+from app import sheets
+
 
 @dataclass(frozen=True)
 class ToolCard:
@@ -98,7 +100,7 @@ def describe_tools_for_prompt() -> str:
     return "\n".join(lines)
 
 
-# ── Реализации инструментов (моки) 
+# ── Реализации инструментов ──
 def execute_check_vacation_balance(user: dict) -> str:
     """Мок: остаток отпуска. В проде — запрос к HR-системе."""
     return (
@@ -109,10 +111,11 @@ def execute_check_vacation_balance(user: dict) -> str:
 
 def execute_create_task(title: str, user: dict) -> str:
     """
-    Мок: создание задачи в трекере. В проде — вызов Jira MCP.
+    Создаёт задачу в реальном трекере: строка добавляется в Google Sheets.
 
     Функция существует отдельно от текста ответа намеренно: это ЕДИНСТВЕННОЕ
     место, где происходит побочный эффект. Значит, на этапе evaluation можно
     посчитать её вызовы и доказать, что без approval задача не создавалась.
     """
-    return f"Задача «{title}» создана в трекере (автор {user['user_id']}, демо-режим)."
+    sheets.append_task(title, user)
+    return f"Задача «{title}» создана в трекере (автор {user['user_id']})."
