@@ -2,6 +2,16 @@
 
 [![tests](https://github.com/ADanUser/corporate-ai-assistant/actions/workflows/tests.yml/badge.svg)](https://github.com/ADanUser/corporate-ai-assistant/actions/workflows/tests.yml)
 
+**Живое демо: [corporate-ai-assistant.onrender.com/docs](https://corporate-ai-assistant.onrender.com/docs)**
+— Swagger UI, можно потыкать прямо в браузере, без установки. Сервис на
+бесплатном тарифе засыпает после 15 минут простоя, первый запрос будит
+его ~30 секунд — это ограничение хостинга, не баг.
+
+Быстрый путь попробовать: `POST /ask` → `Try it out` → тело
+`{"username": "alice", "question": "сколько у меня дней отпуска"}` →
+`Execute`. Пользователи `alice` / `bob` / `admin` — три разные роли,
+см. таблицу [Роли](#роли).
+
 Внутренний помощник компании: отвечает на вопросы по документам, выполняет
 действия через реестр инструментов, соблюдает права доступа и не делает
 рискованных шагов без подтверждения человека.
